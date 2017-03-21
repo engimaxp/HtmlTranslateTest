@@ -29,9 +29,14 @@ namespace HtmlTranslateTest
             var rootTag = HtmlTag.Create(null, TagType.Breaking);
             rootTag.AddChild(tag7);
             rootTag.AddChild(tag5);
-            Assert.AreEqual(rootTag.ToString(), htmltag);
+            Assert.AreEqual(rootTag, DecodeHtmlTag(htmltag));
             // TODO: Add your test code here
             Assert.Pass("Your first passing test");
+        }
+
+        private object DecodeHtmlTag(string htmltag)
+        {
+            throw new NotImplementedException();
         }
     }
 
@@ -76,6 +81,39 @@ namespace HtmlTranslateTest
                 resultBuilder.Append(tag);
             }
             return resultBuilder.ToString();
+        }
+
+        protected bool Equals(HtmlTag other)
+        {
+            bool result = type == other.type && string.Equals(properties, other.properties) && string.Equals(content, other.content);
+            if(result == false) return result;
+            if (ChildTags == null && other.ChildTags == null) return true;
+            if (ChildTags!=null && other.ChildTags!=null)
+            {
+                if (ChildTags.Count == 0 && other.ChildTags.Count == 0) return true;
+                if (ChildTags.Count != other.ChildTags.Count) return false;
+                return !ChildTags.Where((t, i) => !t.Equals(other.ChildTags[i])).Any();
+            }
+            return false;
+        }
+
+        public override bool Equals(object obj)
+        {
+            if (ReferenceEquals(null, obj)) return false;
+            if (ReferenceEquals(this, obj)) return true;
+            if (obj.GetType() != this.GetType()) return false;
+            return Equals((HtmlTag) obj);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                var hashCode = (int) type;
+                hashCode = (hashCode*397) ^ (properties != null ? properties.GetHashCode() : 0);
+                hashCode = (hashCode*397) ^ (content != null ? content.GetHashCode() : 0);
+                return hashCode;
+            }
         }
     }
 }
