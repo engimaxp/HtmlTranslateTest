@@ -2,9 +2,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
 
 namespace HtmlTranslateTest
 {
@@ -99,7 +101,46 @@ namespace HtmlTranslateTest
             Assert.AreEqual(root.ToString(), DecodeHtmlTag(mock).ToString());
         }
 
-        private object DecodeHtmlTag(string html)
+        [Test]
+        public void TestTranscodeToJsonObj()
+        {
+            string mock = "<a target=\"_blank\" href=\"test\"><img src=\"test\"/></a><p>1<br/></p>";
+            var list = new List<ClientContentItem>();
+            list.Add(new ClientContentItem()
+            {
+                TextType = ClientTextType.Photo,
+                Link = "target=\"_blank\" href=\"test\"",
+                Text = "src=\"test\""
+            });
+            list.Add(new ClientContentItem()
+            {
+                TextType = ClientTextType.Text,
+                Text = "1\r\n\r\n"
+            });
+            var actual = TransCodeHtmlToList(mock);
+            var expect = JsonConvert.SerializeObject(list);
+            Assert.AreEqual(expect, actual);
+        }
+
+        [Test]
+        public void TestComplexTranscodeToJsonObj()
+        {
+            string mock = "<p></p>";
+            var result = TransCodeHtmlToList(mock);
+            Assert.IsNotNull(result);
+        }
+        private string TransCodeHtmlToList(string html)
+        {
+            var mockHtmlTag = DecodeHtmlTag(html);
+            ClientContentItem cci = new ClientContentItem();
+            List<ClientContentItem> returnList = new List<ClientContentItem>();
+            mockHtmlTag.TransCodeToList(ref cci, ref returnList, null);
+            if (!cci.isEmpty())
+                returnList.Add(cci);
+            return JsonConvert.SerializeObject(returnList);
+        }
+
+        private HtmlNode DecodeHtmlTag(string html)
         {
             
             HtmlNode root = HtmlNode.CreateRoot();
@@ -140,6 +181,7 @@ namespace HtmlTranslateTest
 
         private static List<HtmlNode> CreateNodesFromTag(List<HtmlTag> tags, int targetStartPos,string html, int tagLevel)
         {
+            if (string.IsNullOrEmpty(html)) return null;
             List<HtmlNode> result = new List<HtmlNode>();
             int currentPos = 0;
             var currentProcessingTag = tags.Where(x => x.tagLevel == tagLevel).ToList();
@@ -239,6 +281,40 @@ namespace HtmlTranslateTest
 
     public class HtmlNode
     {
+        public static string ConvertUrl(string url, string type)
+        {
+            if (url.StartsWith("/webapp/"))
+            {
+                if (type.Trim() == "2")
+                {
+                    return "m.ctrip.com/"+url; //ConfigurationManager.AppSettings["m.ctrip.com"] + url;
+                }
+                else if (type.Trim() == "4")
+                {
+                    if (url.StartsWith("/webapp/myctrip/"))
+                    {
+                        url = "myctrip/index.html#" + url;
+                    }
+                    else
+                    {
+                        url = url.Replace("/webapp/", "");
+                    }
+                    return "ctrip://wireless/h5?url=" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(url)) + "&type=1";
+                }
+                else
+                {
+                    return url;
+                }
+            }
+            else
+            {
+                return url;
+            }
+
+        }
+        private static readonly Regex regexFun = new Regex(@"(?i)\bLizard.jump\b\('(?<url>.*)\',{\btargetModel\b:(?<type>.*)}\)");
+        private static readonly Regex REGEX_URL = new Regex(@"(?i)((http|https)://)?(www.)?(([a-zA-Z0-9\._-]+\.[a-zA-Z]{2,6})|([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}))(:[0-9]{1,9})*(/[a-zA-Z0-9\&#,%_\./-~-]*)?");
+        private static readonly Regex REGEX_PICTURE_URL = new Regex(@"(?i)src=['""](\S+)['""]\s");
         public static HtmlNode Create(string properties, TagType type, string content = null)
         {
             return new HtmlNode()
@@ -263,11 +339,45 @@ namespace HtmlTranslateTest
         private readonly List<HtmlNode> ChildTags = new List<HtmlNode>();
         public string link
         {
-            get { return properties; }
+            get
+            {
+                if (string.IsNullOrEmpty(properties)) return string.Empty;
+                MatchCollection mcFun = regexFun.Matches(properties);
+                if (mcFun.Count > 0)
+                {
+                    return ConvertUrl(mcFun[0].Groups["url"].Value, mcFun[0].Groups["type"].Value);
+                }
+                mcFun = REGEX_URL.Matches(properties);
+                if (mcFun.Count > 0)
+                {
+                    return mcFun[0].Groups[0].Captures[0].Value;
+                }
+                else
+                {
+                    return string.Empty;
+                }
+            }
         }
-
+        public string src
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(properties)) return string.Empty;
+                MatchCollection mcFun = regexFun.Matches(properties);
+                mcFun = REGEX_PICTURE_URL.Matches(properties);
+                if (mcFun.Count > 0)
+                {
+                    return mcFun[0].Groups[1].Captures[0].Value;
+                }
+                else
+                {
+                    return string.Empty;
+                }
+            }
+        }
         public void AddChild(HtmlNode child)
         {
+            if (child == null) return;
             if (child.type == TagType.Default && string.IsNullOrEmpty(child.content) &&
                 string.IsNullOrEmpty(child.properties))
                 return;
@@ -275,6 +385,7 @@ namespace HtmlTranslateTest
         }
         public void AddChilds(List<HtmlNode> childs)
         {
+            if (childs == null || childs.Count == 0) return;
             if (childs.TrueForAll(x => x.IsPlainText()))
             {
                 if (content == null) content = String.Empty;
@@ -299,6 +410,49 @@ namespace HtmlTranslateTest
         public override string ToString()
         {
             return FormatIndexString(String.Empty);
+        }
+
+        public void TransCodeToList(ref ClientContentItem currentItem, ref List<ClientContentItem> returnList,string olink)
+        {
+            if (type != TagType.Image)
+            {
+                currentItem.Text += content;
+            }
+            if(returnList == null) returnList = new List<ClientContentItem>();
+            foreach (HtmlNode t in ChildTags)
+            {
+                t.TransCodeToList(ref currentItem, ref returnList, string.IsNullOrEmpty(olink) ? link : olink);
+            }
+            if (type == TagType.Breaking) currentItem.Text += "\r\n";
+            if (type == TagType.Image)
+            {
+                if (!currentItem.isEmpty())
+                {
+                    returnList.Add(currentItem); 
+                    currentItem = new ClientContentItem();
+                }
+                currentItem.Text = src;//TODO：解析onclick和src
+                currentItem.TextType = ClientTextType.Photo;
+                if (!string.IsNullOrEmpty(link)) currentItem.Link = link;
+                else currentItem.Link = olink??"";
+                returnList.Add(currentItem);
+                currentItem = new ClientContentItem();
+                if (!string.IsNullOrEmpty(olink))
+                    currentItem.Link = olink;
+                return;
+            }
+            if ((currentItem.Link??"")!= (olink??""))
+            {
+                if (!currentItem.isEmpty())
+                {
+                    returnList.Add(currentItem);
+                    currentItem = new ClientContentItem();
+                }
+                currentItem.Link = olink??"";
+                currentItem.TextType = string.IsNullOrEmpty(olink)?ClientTextType.Text : ClientTextType.Href;
+                currentItem.Text += content;
+                return;
+            }
         }
 
         private string FormatIndexString(string prefix)
@@ -344,4 +498,46 @@ namespace HtmlTranslateTest
             }
         }
     }
+    
+    public class ClientContentItem
+    {
+        public ClientContentItem()
+        {
+            Text = string.Empty;
+            Link = string.Empty;
+            TextType = ClientTextType.Text;
+        }
+
+        public ClientTextType TextType { get; set; }
+        public string Text { get; set; }
+        public string Link { get; set; }
+
+        public bool isEmpty()
+        {
+            return string.IsNullOrEmpty(Text);
+        }
+    }
+    public enum ClientTextType
+            {
+                /// <summary>
+                /// 文本类型
+                /// </summary>
+                Text = 1,
+                /// <summary>
+                /// 超链
+                /// </summary>
+                Href = 2,
+                /// <summary>
+                /// 表情
+                /// </summary>
+                Expression = 3,
+                /// <summary>
+                /// 图片
+                /// </summary>
+                Photo = 4,
+                /// <summary>
+                /// 订单
+                /// </summary>
+                Order = 5
+            }
 }
