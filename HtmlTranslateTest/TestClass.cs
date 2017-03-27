@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace HtmlTranslateTest
@@ -11,22 +12,23 @@ namespace HtmlTranslateTest
     public class TestClass
     {
         [Test]
+        [Ignore("Ignore For Now")]
         public void TestMethod()
         {
             var htmltag = "<p class=\"class1\">hello<a href='http://www.baidu.com'><img src=\"randomimg.png\" /> </a> &nbsp;you're welcomed </p><br/>";
-            var tag1 = HtmlTag.Create("src=\"randomimg.png\"", TagType.Image);
-            var tag2 = HtmlTag.Create("href='http://www.baidu.com'", TagType.Default);
-            var tag3 = HtmlTag.Create(null, TagType.Default, "hello");
-            var tag4 = HtmlTag.Create(null, TagType.Default, " you're welcomed ");
-            var tag5 = HtmlTag.Create(null, TagType.Breaking);
-            var tag6 = HtmlTag.Create(null, TagType.Default, " ");
-            var tag7 = HtmlTag.Create(null, TagType.Breaking);
+            var tag1 = HtmlNode.Create("src=\"randomimg.png\"", TagType.Image);
+            var tag2 = HtmlNode.Create("href='http://www.baidu.com'", TagType.Default);
+            var tag3 = HtmlNode.Create(null, TagType.Default, "hello");
+            var tag4 = HtmlNode.Create(null, TagType.Default, " you're welcomed ");
+            var tag5 = HtmlNode.Create(null, TagType.Breaking);
+            var tag6 = HtmlNode.Create(null, TagType.Default, " ");
+            var tag7 = HtmlNode.Create(null, TagType.Breaking);
             tag2.AddChild(tag1);
             tag2.AddChild(tag6);
             tag7.AddChild(tag3);
             tag7.AddChild(tag2);
             tag7.AddChild(tag4);
-            var rootTag = HtmlTag.Create(null, TagType.Breaking);
+            var rootTag = HtmlNode.Create(null, TagType.Breaking);
             rootTag.AddChild(tag7);
             rootTag.AddChild(tag5);
             Assert.AreEqual(rootTag, DecodeHtmlTag(htmltag));
@@ -34,9 +36,197 @@ namespace HtmlTranslateTest
             Assert.Pass("Your first passing test");
         }
 
-        private object DecodeHtmlTag(string htmltag)
+        [Test]
+        public void TestNullHtmlTag()
         {
-            throw new NotImplementedException();
+            Assert.AreEqual(HtmlNode.CreateRoot(),DecodeHtmlTag(""));
+        }
+        [Test]
+        public void TestPlainHtmlTag()
+        {
+            string mock = "Hello";
+            var root = HtmlNode.CreateRoot();
+            root.AddChild(HtmlNode.CreatePlainTag(mock));
+            Assert.AreEqual(root, DecodeHtmlTag(mock));
+        }
+        [Test]
+        public void TestSingleHtmlTag()
+        {
+            string mock = "<br/>Hello";
+            var root = HtmlNode.CreateRoot(); 
+            root.AddChild(HtmlNode.Create(null, TagType.Breaking));
+            root.AddChild(HtmlNode.CreatePlainTag("Hello"));
+            Assert.AreEqual(root.ToString(), DecodeHtmlTag(mock).ToString());
+        }
+
+        [Test]
+        public void TestTwiceHtmlTag()
+        {
+            string mock = "<br/><p>1</p>";
+            var root = HtmlNode.CreateRoot();
+            root.AddChild(HtmlNode.Create(null, TagType.Breaking));
+            root.AddChild(HtmlNode.Create(null, TagType.Breaking,"1"));
+            Assert.AreEqual(root.ToString(), DecodeHtmlTag(mock).ToString());
+        }
+        [Test]
+        public void TestNestHtmlTag()
+        {
+            string mock = "<p>1<br/></p>";
+            var root = HtmlNode.CreateRoot();
+            var br = HtmlNode.Create(null, TagType.Breaking);
+            var plain = HtmlNode.CreatePlainTag("1");
+            var p = HtmlNode.Create(null, TagType.Breaking);
+            p.AddChild(plain);
+            p.AddChild(br);
+            root.AddChild(p);
+            Assert.AreEqual(root.ToString(), DecodeHtmlTag(mock).ToString());
+        }
+
+        [Test]
+        public void TestComplexHtmlTag()
+        {
+            string mock = "<a target=\"_blank\" href=\"test\"><img src=\"test\"/></a><p>1<br/></p>";
+            var root = HtmlNode.CreateRoot();
+            var link = HtmlNode.Create("target=\"_blank\" href=\"test\"", TagType.Default);
+            var img = HtmlNode.Create("src=\"test\"", TagType.Image);
+            link.AddChild(img);
+            var p = HtmlNode.Create(null, TagType.Breaking);
+            var plain = HtmlNode.CreatePlainTag("1");
+            p.AddChild(plain);
+            p.AddChild(HtmlNode.Create(null,TagType.Breaking));
+            root.AddChild(link);
+            root.AddChild(p);
+            Assert.AreEqual(root.ToString(), DecodeHtmlTag(mock).ToString());
+        }
+
+        private object DecodeHtmlTag(string html)
+        {
+            
+            HtmlNode root = HtmlNode.CreateRoot();
+            //无内容
+            if (string.IsNullOrEmpty(html))
+                return root;
+
+            var doms = ConvertTagToList(html);
+            //无html标签
+            if (doms.Count == 0)
+            {
+                root.AddChild(HtmlNode.CreatePlainTag(html));
+                return root;
+            }
+            //再以此处理各个位置的关系
+            root.AddChilds(CreateNodesFromTag(doms,0,html,0));
+            return root;
+        }
+
+        private static TagType NameToTagType(string tagname) 
+        {
+            if(string.IsNullOrEmpty(tagname)) return TagType.Default;
+            switch (tagname.ToLower().Trim())
+            {
+                case "p":
+                case "br":
+                {
+                    return TagType.Breaking;
+                }
+                case "img":
+                {
+                    return TagType.Image;
+                }
+                default:
+                    return TagType.Default;
+            }
+        }
+
+        private static List<HtmlNode> CreateNodesFromTag(List<HtmlTag> tags, int targetStartPos,string html, int tagLevel)
+        {
+            List<HtmlNode> result = new List<HtmlNode>();
+            int currentPos = 0;
+            var currentProcessingTag = tags.Where(x => x.tagLevel == tagLevel).ToList();
+            foreach (var tag in currentProcessingTag)
+            {
+                result.Add(HtmlNode.CreatePlainTag(html.Substring(currentPos, tag.tagStartPos - currentPos - targetStartPos)));
+                var currentNode = HtmlNode.Create(tag.properties, NameToTagType(tag.tagname));
+                currentNode.AddChilds(CreateNodesFromTag(tags.Where(r => r.tagStartPos <= tag.tagContentEndPos && r.tagStartPos >= tag.tagContentStartPos).ToList(), tag.tagContentStartPos, html.Substring(tag.tagContentStartPos - targetStartPos, tag.tagContentEndPos - tag.tagContentStartPos), tagLevel + 1));
+                result.Add(currentNode);
+                currentPos = tag.tagEndPos - targetStartPos;
+            }
+            result.Add(HtmlNode.CreatePlainTag(html.Substring(currentPos,html.Length-currentPos)));
+            return result;
+        }
+
+        private static List<HtmlTag> ConvertTagToList(string html)
+        {
+            Regex TagPattern = new Regex(@"(?m)(?:<\s*(?:\w+)\s*)|(?:(?:<\s*/\w*)?[/]?\s*>)");//匹配html标签头尾
+            MatchCollection mc = TagPattern.Matches(html);
+            List<HtmlTag> doms = new List<HtmlTag>();
+            if (mc.Count == 0)
+            {
+                return doms;
+            }
+            //首先尝试使用堆栈来建立一个位置列表，将包含关系先确立
+            //tagname,tagStartPos,tagContentStartPos,tagProperties
+            Stack<Tuple<string, int, int, string>> tagStack = new Stack<Tuple<string, int, int, string>>();
+            int curPosition = 0;
+            Regex startTagPattern = new Regex(@"<\s*(\w+)\s*");
+            Regex propertyEndPattern = new Regex(@"^\s*>$");
+            Regex propertyEndAndTagEndPattern = new Regex(@"^\s*/\s*>$");
+            foreach (Match match in mc)
+            {
+                if (startTagPattern.IsMatch(match.Value)) //入栈
+                {
+                    curPosition = match.Index + match.Length;
+                    tagStack.Push(
+                        new Tuple<string, int, int, string>(startTagPattern.Match(match.Value).Groups[1].Captures[0].Value,
+                            match.Index, curPosition, string.Empty));
+                }
+                else if (propertyEndPattern.IsMatch(match.Value))
+                {
+                    var properties = html.Substring(curPosition, match.Index - curPosition);
+                    var tag = tagStack.Pop();
+                    curPosition = match.Index + match.Length;
+                    tagStack.Push(new Tuple<string, int, int, string>(tag.Item1, tag.Item2, curPosition, properties));
+                }
+                else //出栈
+                {
+                    var tag = tagStack.Pop();
+                    var tagContentStartPos = tag.Item3;
+                    string properties = tag.Item4;
+                    if (string.IsNullOrEmpty(properties) && propertyEndAndTagEndPattern.IsMatch(match.Value))
+                    {
+                        properties = html.Substring(curPosition, match.Index - curPosition);
+                        curPosition = match.Index;
+                        tagContentStartPos = curPosition;
+                    }
+                    doms.Add(new HtmlTag()
+                    {
+                        tagname = tag.Item1,
+                        tagStartPos = tag.Item2,
+                        tagContentStartPos = tagContentStartPos,
+                        tagContentEndPos = match.Index,
+                        tagEndPos = match.Index + match.Length,
+                        tagLevel = tagStack.Count,
+                        properties = properties
+                    });
+                }
+            }
+            return doms;
+        }
+    }
+
+    public class HtmlTag
+    {
+        public string properties { get; set; }
+        public int tagStartPos { get; set; }
+        public int tagContentStartPos { get; set; }
+        public int tagContentEndPos { get; set; }
+        public int tagEndPos { get; set; }
+        public string tagname { get; set; }
+        public int tagLevel { get; set; }
+
+        public override string ToString()
+        {
+            return string.Format("{{{0}, {1}, {2}, {3}, {4}, {5}, {6}}}", properties, tagStartPos, tagContentStartPos, tagContentEndPos, tagEndPos, tagname, tagLevel);
         }
     }
 
@@ -47,43 +237,81 @@ namespace HtmlTranslateTest
         Default
     }
 
-    public class HtmlTag
+    public class HtmlNode
     {
-        public static HtmlTag Create(string properties, TagType type, string content = null)
+        public static HtmlNode Create(string properties, TagType type, string content = null)
         {
-            return new HtmlTag()
+            return new HtmlNode()
             {
                 type = type,
                 properties = properties,
                 content = content
             };
         }
+        public static HtmlNode CreateRoot()
+        {
+            return Create(null, TagType.Default);
+        }
+        public static HtmlNode CreatePlainTag(string text)
+        {
+            return Create(null, TagType.Default, text);
+        }
 
         public TagType type { get; set; }
         public string properties { get; set; }
         public string content { get; set; }
-        private readonly List<HtmlTag> ChildTags = new List<HtmlTag>();
-        private string link
+        private readonly List<HtmlNode> ChildTags = new List<HtmlNode>();
+        public string link
         {
             get { return properties; }
         }
 
-        public void AddChild(HtmlTag child)
+        public void AddChild(HtmlNode child)
         {
+            if (child.type == TagType.Default && string.IsNullOrEmpty(child.content) &&
+                string.IsNullOrEmpty(child.properties))
+                return;
             ChildTags.Add(child);
+        }
+        public void AddChilds(List<HtmlNode> childs)
+        {
+            if (childs.TrueForAll(x => x.IsPlainText()))
+            {
+                if (content == null) content = String.Empty;
+                childs.ForEach(r=>content+=r.content);
+            }
+            else
+            {
+                childs.ForEach(AddChild);    
+            }
+        }
+
+        public bool IsPlainText()
+        {
+            if (type == TagType.Default && string.IsNullOrEmpty(properties))
+            {
+                if (ChildTags == null || ChildTags.Count == 0) return true;
+                return ChildTags.TrueForAll(r => r.IsPlainText());
+            }
+            return false;
         }
 
         public override string ToString()
         {
-            StringBuilder resultBuilder = new StringBuilder();
-            foreach (var tag in ChildTags)
-            {
-                resultBuilder.Append(tag);
-            }
-            return resultBuilder.ToString();
+            return FormatIndexString(String.Empty);
         }
 
-        protected bool Equals(HtmlTag other)
+        private string FormatIndexString(string prefix)
+        {
+            StringBuilder stringBuilder = new StringBuilder(string.Format("{4}type: {0}, properties: {1}, content: {2}, link: {3}", type, properties, content, link,prefix));
+            if (ChildTags != null && ChildTags.Count > 0)
+            {
+                ChildTags.ForEach(x => stringBuilder.Append("\r\n" + x.FormatIndexString(prefix+"\t")));
+            }
+            return stringBuilder.ToString();
+        }
+
+        protected bool Equals(HtmlNode other)
         {
             bool result = type == other.type && string.Equals(properties, other.properties) && string.Equals(content, other.content);
             if(result == false) return result;
@@ -102,7 +330,7 @@ namespace HtmlTranslateTest
             if (ReferenceEquals(null, obj)) return false;
             if (ReferenceEquals(this, obj)) return true;
             if (obj.GetType() != this.GetType()) return false;
-            return Equals((HtmlTag) obj);
+            return Equals((HtmlNode) obj);
         }
 
         public override int GetHashCode()
