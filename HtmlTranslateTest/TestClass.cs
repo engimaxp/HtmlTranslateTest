@@ -1,18 +1,50 @@
-﻿using NUnit.Framework;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
+using System.Web;
 using Newtonsoft.Json;
+using NUnit.Framework;
 
 namespace HtmlTranslateTest
 {
     [TestFixture]
     public class TestClass
     {
+        private static void PageBulkOperateDB<T>(Action<IList<T>> function, IList<T> list)
+        {
+            int PageSize = 4;//BulkInsert的最大插入记录是1万条数据
+            int CurPage = 1;
+            while ((CurPage - 1) * PageSize < list.Count)
+            {
+                function(list.Take(PageSize * CurPage).Skip(PageSize * (CurPage - 1)).ToList());
+                CurPage += 1;
+            }
+        }
+        [Test]
+        public void Test()
+        {
+            var lista = new List<int>();
+            var list = new List<int>(new int[]{1,2,3,4,5,6,7,8,9,10,11,12,13,14});
+            PageBulkOperateDB(x => { lista.AddRange(x); }, list);
+            Assert.AreEqual(lista,list);
+        }
+        
+        [Test]
+        public void Test2()
+        {
+            var lista = new List<int>(new int[]{0,1,2});
+            var list = new List<int>(new int[]{1,2,3,4,5,6,7,8,9,10,11,12,13,14});
+            list = list.Select(r => r%3).Distinct().ToList();
+            Assert.AreEqual(lista,list);
+        }
+        [Test]
+        public void Test3()
+        {
+            Assert.IsTrue(",e21535731,m175673171,13402014201,2038911635,wwwwww,13916983966,13564950012,63757559,2000739530,67036229,ruodian,1101616736,m272687463,e00234773,m172683879,13761226082,m502443462,m95524188,m353786436,m38180546,".Contains("," + "M38180546".ToLower() + ","));
+        }
+
         [Test]
         [Ignore("Ignore For Now")]
         public void TestMethod()
@@ -121,6 +153,31 @@ namespace HtmlTranslateTest
             var expect = JsonConvert.SerializeObject(list);
             Assert.AreEqual(expect, actual);
         }
+        [Test]
+        public void TestTranscodeToJsonObj2()
+        {
+
+            string mock = "亲亲>您的<p>身</p>份证是<br/>丢失<a>wwww</a>了还是没有带呢>";
+            Regex rgx = new Regex(@"<img(.+?[^/]+)>");
+            mock = rgx.Replace(mock, "<img$1/>");
+
+            var list = new List<ClientContentItem>();
+            list.Add(new ClientContentItem()
+            {
+                TextType = ClientTextType.Photo,
+                Link = "target=\"_blank\" href=\"test\"",
+                Text = "src=\"test\""
+            });
+            list.Add(new ClientContentItem()
+            {
+                TextType = ClientTextType.Text,
+                Text = "1\r\n\r\n"
+            });
+            var actual = TransCodeHtmlToList(mock);
+            var expect = JsonConvert.SerializeObject(list);
+            Assert.AreEqual(expect, actual);
+
+        }
 
         [Test]
         public void TestComplexTranscodeToJsonObj()
@@ -129,16 +186,84 @@ namespace HtmlTranslateTest
             var result = TransCodeHtmlToList(mock);
             Assert.IsNotNull(result);
         }
+
+        private string encodeNoneHtmlChar(string html)
+        {
+            Regex TagPattern = new Regex(@"(?mi)(?:<\s*(?:[a-z]+)\s*)\S*?(?:(?:<\s*/[a-z]*)?[/]?\s*>)|(?:<\s*/[a-z]*?[/]?\s*>)");//匹配html标签头尾
+            MatchCollection mc = TagPattern.Matches(html);
+            int curPosition = 0;
+            StringBuilder returnString = new StringBuilder();
+            
+            foreach (Match match in mc)
+            {
+                returnString.Append(HttpUtility.HtmlEncode(html.Substring(curPosition, match.Index - curPosition)));
+                returnString.Append(match.Value);
+                curPosition += match.Index - curPosition + match.Length;
+            }
+            if (curPosition < html.Length - 1)
+            {
+                returnString.Append(HttpUtility.HtmlEncode(html.Substring(curPosition, html.Length - curPosition)));
+            }
+            return returnString.ToString();
+        }
+
         private string TransCodeHtmlToList(string html)
         {
+            //htmlencode
+            html = encodeNoneHtmlChar(html);
+            //htmlToTree
             var mockHtmlTag = DecodeHtmlTag(html);
-            ClientContentItem cci = new ClientContentItem();
-            List<ClientContentItem> returnList = new List<ClientContentItem>();
-            mockHtmlTag.TransCodeToList(ref cci, ref returnList, null);
-            if (!cci.isEmpty())
-                returnList.Add(cci);
+            //TreeToList
+            List<ClientContentItem> returnList = mockHtmlTag.BackOrderTravel();
+            
+            //List中的特殊处理
+            if (returnList != null && returnList.Count > 0)
+            {
+                //Html解码
+                returnList.ForEach(r =>
+                {
+                    if(!string.IsNullOrEmpty(r.Text))
+                        r.Text = HttpUtility.HtmlDecode(r.Text);
+                    if (!string.IsNullOrEmpty(r.Link))
+                        r.Link = HttpUtility.HtmlDecode(r.Link);
+                });
+                //去掉最后多余的换行符
+                while (returnList.Count > 0 && !string.IsNullOrEmpty(returnList.Last().Text) && returnList.Last().Text.EndsWith("\r\n"))
+                {
+                    returnList.Last().Text = returnList.Last().Text.Substring(0, returnList.Last().Text.LastIndexOf("\r\n", StringComparison.Ordinal));
+                    if (string.IsNullOrEmpty(returnList.Last().Text) && returnList.Last().TextType == ClientTextType.Text)
+                    {
+                        returnList.RemoveAt(returnList.Count - 1);
+                    }
+                }
+                for (int i = 0; i < returnList.Count-1; i++)
+                {
+                    if (returnList[i].TextType == ClientTextType.Photo &&
+                        returnList[i + 1].TextType == ClientTextType.Href &&
+                        !string.IsNullOrEmpty(returnList[i + 1].Link) &&
+                        string.IsNullOrEmpty(returnList[i + 1].Text))
+                    {
+                        returnList[i].Link = returnList[i + 1].Link;
+                    }
+                }
+                //过滤邮件和电话链接，产生新的Type
+                foreach (var clientOntentItem in returnList.Where(r => r.TextType == ClientTextType.Href && !string.IsNullOrEmpty(r.Link)))
+                {
+                    if (clientOntentItem.Link.ToLower().Contains("mailto:"))
+                    {
+                        clientOntentItem.Link = string.Empty;
+                        clientOntentItem.TextType = ClientTextType.Email;
+                    }
+                    if (clientOntentItem.Link.ToLower().Contains("telto:"))
+                    {
+                        clientOntentItem.Link = string.Empty;
+                        clientOntentItem.TextType = ClientTextType.Tel;
+                    }
+                }
+            }
             return JsonConvert.SerializeObject(returnList);
         }
+
 
         private HtmlNode DecodeHtmlTag(string html)
         {
@@ -281,39 +406,9 @@ namespace HtmlTranslateTest
 
     public class HtmlNode
     {
-        public static string ConvertUrl(string url, string type)
-        {
-            if (url.StartsWith("/webapp/"))
-            {
-                if (type.Trim() == "2")
-                {
-                    return "m.ctrip.com/"+url; //ConfigurationManager.AppSettings["m.ctrip.com"] + url;
-                }
-                else if (type.Trim() == "4")
-                {
-                    if (url.StartsWith("/webapp/myctrip/"))
-                    {
-                        url = "myctrip/index.html#" + url;
-                    }
-                    else
-                    {
-                        url = url.Replace("/webapp/", "");
-                    }
-                    return "ctrip://wireless/h5?url=" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(url)) + "&type=1";
-                }
-                else
-                {
-                    return url;
-                }
-            }
-            else
-            {
-                return url;
-            }
-
-        }
-        private static readonly Regex regexFun = new Regex(@"(?i)\bLizard.jump\b\('(?<url>.*)\',{\btargetModel\b:(?<type>.*)}\)");
+        private static readonly Regex regexFun = new Regex(@"(?i)\bchatUrlJumpLib.Jump\b\('(?<url>.*)\',(?<type>.*)\)");
         private static readonly Regex REGEX_URL = new Regex(@"(?i)((http|https)://)?(www.)?(([a-zA-Z0-9\._-]+\.[a-zA-Z]{2,6})|([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}))(:[0-9]{1,9})*(/[a-zA-Z0-9\&#,%_\./-~-]*)?");
+        private static readonly Regex REGEX_HREF = new Regex(@"(?i)href=""\s*(.+?)\s*""");
         private static readonly Regex REGEX_PICTURE_URL = new Regex(@"(?i)src=['""](\S+)['""]\s");
         public static HtmlNode Create(string properties, TagType type, string content = null)
         {
@@ -337,26 +432,34 @@ namespace HtmlTranslateTest
         public string properties { get; set; }
         public string content { get; set; }
         private readonly List<HtmlNode> ChildTags = new List<HtmlNode>();
+        private string _link;
         public string link
         {
             get
             {
+                if (!string.IsNullOrEmpty(_link)) return _link;
                 if (string.IsNullOrEmpty(properties)) return string.Empty;
                 MatchCollection mcFun = regexFun.Matches(properties);
                 if (mcFun.Count > 0)
                 {
-                    return ConvertUrl(mcFun[0].Groups["url"].Value, mcFun[0].Groups["type"].Value);
+                    _link = mcFun[0].Groups["url"].Value;
+                    return _link;
+                }
+                mcFun = REGEX_HREF.Matches(properties);
+                if(mcFun.Count > 0)
+                {
+                    _link = mcFun[0].Groups[1].Captures[0].Value;
+                    return _link;
                 }
                 mcFun = REGEX_URL.Matches(properties);
                 if (mcFun.Count > 0)
                 {
-                    return mcFun[0].Groups[0].Captures[0].Value;
+                    _link = mcFun[0].Groups[0].Captures[0].Value;
+                    return _link;
                 }
-                else
-                {
-                    return string.Empty;
-                }
+                return string.Empty;
             }
+            set { _link = value; }
         }
         public string src
         {
@@ -378,6 +481,8 @@ namespace HtmlTranslateTest
         public void AddChild(HtmlNode child)
         {
             if (child == null) return;
+            if (child.type == TagType.Default && !string.IsNullOrEmpty(child.content))
+                child.content = child.content.Replace("&nbsp;", " ");
             if (child.type == TagType.Default && string.IsNullOrEmpty(child.content) &&
                 string.IsNullOrEmpty(child.properties))
                 return;
@@ -414,7 +519,7 @@ namespace HtmlTranslateTest
 
         public void TransCodeToList(ref ClientContentItem currentItem, ref List<ClientContentItem> returnList,string olink)
         {
-            if (type != TagType.Image)
+            if (type != TagType.Image && (((currentItem.Link ?? "") == (link ?? "")) && (currentItem.Link ?? "") == (olink ?? "")))
             {
                 currentItem.Text += content;
             }
@@ -441,7 +546,19 @@ namespace HtmlTranslateTest
                     currentItem.Link = olink;
                 return;
             }
-            if ((currentItem.Link??"")!= (olink??""))
+            if ((currentItem.Link ?? "") != (link ?? ""))
+            {
+                if (!currentItem.isEmpty())
+                {
+                    returnList.Add(currentItem);
+                    currentItem = new ClientContentItem();
+                }
+                currentItem.Link = link ?? "";
+                currentItem.TextType = string.IsNullOrEmpty(link) ? ClientTextType.Text : ClientTextType.Href;
+                currentItem.Text += content;
+                return;
+            }
+            if ((currentItem.Link ?? "") != (olink ?? ""))
             {
                 if (!currentItem.isEmpty())
                 {
@@ -497,6 +614,121 @@ namespace HtmlTranslateTest
                 return hashCode;
             }
         }
+
+        public List<ClientContentItem> BackOrderTravel()
+        {
+            List<ClientContentItem> reList = new List<ClientContentItem>();
+            //后续遍历
+            if (ChildTags != null && ChildTags.Count > 0)
+                foreach (var r in ChildTags) 
+                    AddClientContentItems(ref reList, r.BackOrderTravel(),this.link);
+            
+            //访问根节点
+            ClientContentItem item = TransCurrentNodeToClientContentItem();
+
+            //加入根节点
+            if (item != null)
+            {
+                if (reList.Count > 0)
+                {
+                    var lastitem = reList.Last();
+                    if (lastitem.JoinAbleWith(item))
+                    {
+                        lastitem.JoinWith(item);
+                    }
+                    else
+                    {
+                        reList.Add(item);
+                    }
+                }
+                else
+                {
+                    reList.Add(item);
+                }
+                
+            }
+
+            return reList;
+        }
+
+        private ClientContentItem TransCurrentNodeToClientContentItem()
+        {
+            if (string.IsNullOrEmpty(content) && string.IsNullOrEmpty(link) && this.type == TagType.Default)
+                return null;
+            var currentItem = new ClientContentItem();
+            if (this.type == TagType.Image)
+            {
+                currentItem.Text = src;//TODO：解析onclick和src
+                currentItem.TextType = ClientTextType.Photo;
+                if (!string.IsNullOrEmpty(link)) currentItem.Link = link;
+            }
+            else if (this.type == TagType.Breaking)
+            {
+                if (!string.IsNullOrEmpty(content))
+                    currentItem.Text = content;
+                else
+                    currentItem.Text = string.Empty;
+                currentItem.Text += "\r\n";
+                currentItem.TextType = ClientTextType.Text;
+                if (!string.IsNullOrEmpty(link))
+                {
+                    currentItem.Link = link;
+                    currentItem.TextType = ClientTextType.Href;
+                }
+            }
+            else if (this.type == TagType.Default && !string.IsNullOrEmpty(link))
+            {
+                if (!string.IsNullOrEmpty(content))
+                    currentItem.Text = content;
+                currentItem.Link = link;
+                currentItem.TextType = ClientTextType.Href;
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(content))
+                    currentItem.Text = content;
+                currentItem.TextType = ClientTextType.Text;
+            }
+            return currentItem;
+        }
+
+        /// <summary>
+        /// 合并List
+        /// </summary>
+        /// <param name="reList"></param>
+        /// <param name="backOrderTravel"></param>
+        /// <param name="olink">上层链接</param>
+        private void AddClientContentItems(ref List<ClientContentItem> reList, List<ClientContentItem> backOrderTravel,string olink)
+        {
+            if (reList == null || reList.Count == 0) {
+                reList = backOrderTravel;
+                return;
+            }
+            if (backOrderTravel == null || backOrderTravel.Count == 0) return;
+            //上层Link影响下层内容
+            if (!string.IsNullOrEmpty(olink))
+            {
+                backOrderTravel.Where(r=>r.TextType == ClientTextType.Text).ToList().ForEach(x=>
+                {
+                    x.TextType = ClientTextType.Href;
+                    x.Link = olink;
+                });
+                backOrderTravel.Where(r=>r.TextType == ClientTextType.Photo).ToList().ForEach(x=>x.Link = olink);
+            }
+            var lastitem = reList.Last();
+            foreach (ClientContentItem curItem in backOrderTravel)
+            {
+                if (lastitem.JoinAbleWith(curItem))
+                {
+                    lastitem.JoinWith(curItem);
+                }
+                else
+                {
+                    lastitem = curItem;
+                    reList.Add(lastitem);
+                }
+            }
+        }
     }
     
     public class ClientContentItem
@@ -515,6 +747,48 @@ namespace HtmlTranslateTest
         public bool isEmpty()
         {
             return string.IsNullOrEmpty(Text);
+        }
+
+        public bool JoinAbleWith(ClientContentItem curItem)
+        {
+            if (this.TextType == curItem.TextType)
+            {
+                switch (this.TextType)
+                {
+                    case ClientTextType.Href:
+                    {
+                        return this.Link == curItem.Link;
+                    }
+                    case ClientTextType.Text:
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        public void JoinWith(ClientContentItem curItem)
+        {
+            if (this.TextType == curItem.TextType) ;
+            {
+                switch (this.TextType)
+                {
+                    case ClientTextType.Href:
+                    {
+                        if (this.Link == curItem.Link)
+                        {
+                            this.Text = (this.Text ?? String.Empty) + curItem.Text;
+                        }
+                        break;
+                    }
+                    case ClientTextType.Text:
+                    {
+                        this.Text = (this.Text ?? String.Empty) + curItem.Text;
+                        break;
+                    }
+                }
+            }
         }
     }
     public enum ClientTextType
@@ -536,8 +810,13 @@ namespace HtmlTranslateTest
                 /// </summary>
                 Photo = 4,
                 /// <summary>
-                /// 订单
+                /// 电话
                 /// </summary>
-                Order = 5
+                Tel = 5,
+
+                /// <summary>
+                /// 邮件
+                /// </summary>
+                Email = 6
             }
 }
