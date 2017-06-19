@@ -6,44 +6,15 @@ using System.Text.RegularExpressions;
 using System.Web;
 using Newtonsoft.Json;
 using NUnit.Framework;
+using CsQuery;
+using CsQuery.ExtensionMethods.Internal;
+using CsQuery.HtmlParser;
 
 namespace HtmlTranslateTest
 {
     [TestFixture]
     public class TestClass
     {
-        private static void PageBulkOperateDB<T>(Action<IList<T>> function, IList<T> list)
-        {
-            int PageSize = 4;//BulkInsert的最大插入记录是1万条数据
-            int CurPage = 1;
-            while ((CurPage - 1) * PageSize < list.Count)
-            {
-                function(list.Take(PageSize * CurPage).Skip(PageSize * (CurPage - 1)).ToList());
-                CurPage += 1;
-            }
-        }
-        [Test]
-        public void Test()
-        {
-            var lista = new List<int>();
-            var list = new List<int>(new int[]{1,2,3,4,5,6,7,8,9,10,11,12,13,14});
-            PageBulkOperateDB(x => { lista.AddRange(x); }, list);
-            Assert.AreEqual(lista,list);
-        }
-        
-        [Test]
-        public void Test2()
-        {
-            var lista = new List<int>(new int[]{0,1,2});
-            var list = new List<int>(new int[]{1,2,3,4,5,6,7,8,9,10,11,12,13,14});
-            list = list.Select(r => r%3).Distinct().ToList();
-            Assert.AreEqual(lista,list);
-        }
-        [Test]
-        public void Test3()
-        {
-            Assert.IsTrue(",e21535731,m175673171,13402014201,2038911635,wwwwww,13916983966,13564950012,63757559,2000739530,67036229,ruodian,1101616736,m272687463,e00234773,m172683879,13761226082,m502443462,m95524188,m353786436,m38180546,".Contains("," + "M38180546".ToLower() + ","));
-        }
 
         [Test]
         [Ignore("Ignore For Now")]
@@ -154,12 +125,63 @@ namespace HtmlTranslateTest
             Assert.AreEqual(expect, actual);
         }
         [Test]
+        public void TestCSQuery() {
+            string mock = "亲亲>您的<p>身</p>份证是<br/>丢失<a href='http://www.baidu.com'>wwww</a>了还是没有带呢>";
+            var b = CreateDOMTree(mock);
+            Assert.IsNotNull(b);
+
+            var a = TransCodeHtmlToListV2(mock);
+            Assert.IsNotNull(mock);
+        }
+        public HtmlNode CreateDOMTree(string html) {
+            HtmlNode root = HtmlNode.CreateRoot();
+            //无内容
+            if (string.IsNullOrEmpty(html))
+                return root;
+            CQ dom = CQ.Create(html);
+            //再以此处理各个位置的关系
+            root = IterateIDOMElement(dom.Document,null);
+            return root;
+        }
+        public HtmlNode IterateIDOMElement(IDomObject element, HtmlNode parent) {
+            HtmlNode current;
+            if (parent == null)//root节点
+            {
+                current = HtmlNode.CreateRoot();
+            }
+            else {
+                if (element.NodeName == "#text")
+                {
+                    current = HtmlNode.CreatePlainTag(element.ToString());
+                }
+                else {
+                    StringBuilder attrs = new StringBuilder();
+                    if (element.HasAttributes) {
+                        element.Attributes.ToList().ForEach(x => attrs.AppendFormat("{0}='{1}'", x.Key, x.Value));
+                    }
+                    current = HtmlNode.Create(attrs.ToString(), NameToTagType(element.NodeName));
+                }
+                parent.AddChild(current);
+            }
+            //遍历子树
+            if (element.HasChildren) {
+                for (int i = 0; i < element.ChildNodes.Count; i++) {
+                    IterateIDOMElement(element[i], current);
+                }
+            }
+            return current;
+        }
+        [Test]
         public void TestTranscodeToJsonObj2()
         {
 
             string mock = "亲亲>您的<p>身</p>份证是<br/>丢失<a>wwww</a>了还是没有带呢>";
             Regex rgx = new Regex(@"<img(.+?[^/]+)>");
             mock = rgx.Replace(mock, "<img$1/>");
+
+
+            var actual = TransCodeHtmlToList(mock);
+
 
             var list = new List<ClientContentItem>();
             list.Add(new ClientContentItem()
@@ -173,8 +195,9 @@ namespace HtmlTranslateTest
                 TextType = ClientTextType.Text,
                 Text = "1\r\n\r\n"
             });
-            var actual = TransCodeHtmlToList(mock);
             var expect = JsonConvert.SerializeObject(list);
+
+
             Assert.AreEqual(expect, actual);
 
         }
@@ -264,6 +287,52 @@ namespace HtmlTranslateTest
             return JsonConvert.SerializeObject(returnList);
         }
 
+        private string TransCodeHtmlToListV2(string html)
+        {
+            //htmlToTree
+            var mockHtmlTag = CreateDOMTree(html);
+            //TreeToList
+            List<ClientContentItem> returnList = mockHtmlTag.BackOrderTravel();
+
+            //List中的特殊处理
+            if (returnList != null && returnList.Count > 0)
+            {
+                //去掉最后多余的换行符
+                while (returnList.Count > 0 && !string.IsNullOrEmpty(returnList.Last().Text) && returnList.Last().Text.EndsWith("\r\n"))
+                {
+                    returnList.Last().Text = returnList.Last().Text.Substring(0, returnList.Last().Text.LastIndexOf("\r\n", StringComparison.Ordinal));
+                    if (string.IsNullOrEmpty(returnList.Last().Text) && returnList.Last().TextType == ClientTextType.Text)
+                    {
+                        returnList.RemoveAt(returnList.Count - 1);
+                    }
+                }
+                for (int i = 0; i < returnList.Count - 1; i++)
+                {
+                    if (returnList[i].TextType == ClientTextType.Photo &&
+                        returnList[i + 1].TextType == ClientTextType.Href &&
+                        !string.IsNullOrEmpty(returnList[i + 1].Link) &&
+                        string.IsNullOrEmpty(returnList[i + 1].Text))
+                    {
+                        returnList[i].Link = returnList[i + 1].Link;
+                    }
+                }
+                //过滤邮件和电话链接，产生新的Type
+                foreach (var clientOntentItem in returnList.Where(r => r.TextType == ClientTextType.Href && !string.IsNullOrEmpty(r.Link)))
+                {
+                    if (clientOntentItem.Link.ToLower().Contains("mailto:"))
+                    {
+                        clientOntentItem.Link = string.Empty;
+                        clientOntentItem.TextType = ClientTextType.Email;
+                    }
+                    if (clientOntentItem.Link.ToLower().Contains("telto:"))
+                    {
+                        clientOntentItem.Link = string.Empty;
+                        clientOntentItem.TextType = ClientTextType.Tel;
+                    }
+                }
+            }
+            return JsonConvert.SerializeObject(returnList);
+        }
 
         private HtmlNode DecodeHtmlTag(string html)
         {
@@ -298,7 +367,7 @@ namespace HtmlTranslateTest
                 case "img":
                 {
                     return TagType.Image;
-                }
+                    }
                 default:
                     return TagType.Default;
             }
@@ -515,61 +584,6 @@ namespace HtmlTranslateTest
         public override string ToString()
         {
             return FormatIndexString(String.Empty);
-        }
-
-        public void TransCodeToList(ref ClientContentItem currentItem, ref List<ClientContentItem> returnList,string olink)
-        {
-            if (type != TagType.Image && (((currentItem.Link ?? "") == (link ?? "")) && (currentItem.Link ?? "") == (olink ?? "")))
-            {
-                currentItem.Text += content;
-            }
-            if(returnList == null) returnList = new List<ClientContentItem>();
-            foreach (HtmlNode t in ChildTags)
-            {
-                t.TransCodeToList(ref currentItem, ref returnList, string.IsNullOrEmpty(olink) ? link : olink);
-            }
-            if (type == TagType.Breaking) currentItem.Text += "\r\n";
-            if (type == TagType.Image)
-            {
-                if (!currentItem.isEmpty())
-                {
-                    returnList.Add(currentItem); 
-                    currentItem = new ClientContentItem();
-                }
-                currentItem.Text = src;//TODO：解析onclick和src
-                currentItem.TextType = ClientTextType.Photo;
-                if (!string.IsNullOrEmpty(link)) currentItem.Link = link;
-                else currentItem.Link = olink??"";
-                returnList.Add(currentItem);
-                currentItem = new ClientContentItem();
-                if (!string.IsNullOrEmpty(olink))
-                    currentItem.Link = olink;
-                return;
-            }
-            if ((currentItem.Link ?? "") != (link ?? ""))
-            {
-                if (!currentItem.isEmpty())
-                {
-                    returnList.Add(currentItem);
-                    currentItem = new ClientContentItem();
-                }
-                currentItem.Link = link ?? "";
-                currentItem.TextType = string.IsNullOrEmpty(link) ? ClientTextType.Text : ClientTextType.Href;
-                currentItem.Text += content;
-                return;
-            }
-            if ((currentItem.Link ?? "") != (olink ?? ""))
-            {
-                if (!currentItem.isEmpty())
-                {
-                    returnList.Add(currentItem);
-                    currentItem = new ClientContentItem();
-                }
-                currentItem.Link = olink??"";
-                currentItem.TextType = string.IsNullOrEmpty(olink)?ClientTextType.Text : ClientTextType.Href;
-                currentItem.Text += content;
-                return;
-            }
         }
 
         private string FormatIndexString(string prefix)
@@ -791,32 +805,37 @@ namespace HtmlTranslateTest
             }
         }
     }
-    public enum ClientTextType
-            {
-                /// <summary>
-                /// 文本类型
-                /// </summary>
-                Text = 1,
-                /// <summary>
-                /// 超链
-                /// </summary>
-                Href = 2,
-                /// <summary>
-                /// 表情
-                /// </summary>
-                Expression = 3,
-                /// <summary>
-                /// 图片
-                /// </summary>
-                Photo = 4,
-                /// <summary>
-                /// 电话
-                /// </summary>
-                Tel = 5,
 
-                /// <summary>
-                /// 邮件
-                /// </summary>
-                Email = 6
-            }
+    public enum ClientTextType
+    {
+        /// <summary>
+        /// 文本类型
+        /// </summary>
+        Text = 1,
+
+        /// <summary>
+        /// 超链
+        /// </summary>
+        Href = 2,
+
+        /// <summary>
+        /// 表情
+        /// </summary>
+        Expression = 3,
+
+        /// <summary>
+        /// 图片
+        /// </summary>
+        Photo = 4,
+
+        /// <summary>
+        /// 电话
+        /// </summary>
+        Tel = 5,
+
+        /// <summary>
+        /// 邮件
+        /// </summary>
+        Email = 6
+    }
 }
