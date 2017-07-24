@@ -15,123 +15,15 @@ namespace HtmlTranslateTest
     [TestFixture]
     public class TestClass
     {
-
-        [Test]
-        [Ignore("Ignore For Now")]
-        public void TestMethod()
-        {
-            var htmltag = "<p class=\"class1\">hello<a href='http://www.baidu.com'><img src=\"randomimg.png\" /> </a> &nbsp;you're welcomed </p><br/>";
-            var tag1 = HtmlNode.Create("src=\"randomimg.png\"", TagType.Image);
-            var tag2 = HtmlNode.Create("href='http://www.baidu.com'", TagType.Default);
-            var tag3 = HtmlNode.Create(null, TagType.Default, "hello");
-            var tag4 = HtmlNode.Create(null, TagType.Default, " you're welcomed ");
-            var tag5 = HtmlNode.Create(null, TagType.Breaking);
-            var tag6 = HtmlNode.Create(null, TagType.Default, " ");
-            var tag7 = HtmlNode.Create(null, TagType.Breaking);
-            tag2.AddChild(tag1);
-            tag2.AddChild(tag6);
-            tag7.AddChild(tag3);
-            tag7.AddChild(tag2);
-            tag7.AddChild(tag4);
-            var rootTag = HtmlNode.Create(null, TagType.Breaking);
-            rootTag.AddChild(tag7);
-            rootTag.AddChild(tag5);
-            Assert.AreEqual(rootTag, DecodeHtmlTag(htmltag));
-            // TODO: Add your test code here
-            Assert.Pass("Your first passing test");
-        }
-
-        [Test]
-        public void TestNullHtmlTag()
-        {
-            Assert.AreEqual(HtmlNode.CreateRoot(),DecodeHtmlTag(""));
-        }
-        [Test]
-        public void TestPlainHtmlTag()
-        {
-            string mock = "Hello";
-            var root = HtmlNode.CreateRoot();
-            root.AddChild(HtmlNode.CreatePlainTag(mock));
-            Assert.AreEqual(root, DecodeHtmlTag(mock));
-        }
-        [Test]
-        public void TestSingleHtmlTag()
-        {
-            string mock = "<br/>Hello";
-            var root = HtmlNode.CreateRoot(); 
-            root.AddChild(HtmlNode.Create(null, TagType.Breaking));
-            root.AddChild(HtmlNode.CreatePlainTag("Hello"));
-            Assert.AreEqual(root.ToString(), DecodeHtmlTag(mock).ToString());
-        }
-
-        [Test]
-        public void TestTwiceHtmlTag()
-        {
-            string mock = "<br/><p>1</p>";
-            var root = HtmlNode.CreateRoot();
-            root.AddChild(HtmlNode.Create(null, TagType.Breaking));
-            root.AddChild(HtmlNode.Create(null, TagType.Breaking,"1"));
-            Assert.AreEqual(root.ToString(), DecodeHtmlTag(mock).ToString());
-        }
-        [Test]
-        public void TestNestHtmlTag()
-        {
-            string mock = "<p>1<br/></p>";
-            var root = HtmlNode.CreateRoot();
-            var br = HtmlNode.Create(null, TagType.Breaking);
-            var plain = HtmlNode.CreatePlainTag("1");
-            var p = HtmlNode.Create(null, TagType.Breaking);
-            p.AddChild(plain);
-            p.AddChild(br);
-            root.AddChild(p);
-            Assert.AreEqual(root.ToString(), DecodeHtmlTag(mock).ToString());
-        }
-
-        [Test]
-        public void TestComplexHtmlTag()
-        {
-            string mock = "<a target=\"_blank\" href=\"test\"><img src=\"test\"/></a><p>1<br/></p>";
-            var root = HtmlNode.CreateRoot();
-            var link = HtmlNode.Create("target=\"_blank\" href=\"test\"", TagType.Default);
-            var img = HtmlNode.Create("src=\"test\"", TagType.Image);
-            link.AddChild(img);
-            var p = HtmlNode.Create(null, TagType.Breaking);
-            var plain = HtmlNode.CreatePlainTag("1");
-            p.AddChild(plain);
-            p.AddChild(HtmlNode.Create(null,TagType.Breaking));
-            root.AddChild(link);
-            root.AddChild(p);
-            Assert.AreEqual(root.ToString(), DecodeHtmlTag(mock).ToString());
-        }
-
-        [Test]
-        public void TestTranscodeToJsonObj()
-        {
-            string mock = "<a target=\"_blank\" href=\"test\"><img src=\"test\"/></a><p>1<br/></p>";
-            var list = new List<ClientContentItem>();
-            list.Add(new ClientContentItem()
-            {
-                TextType = ClientTextType.Photo,
-                Link = "target=\"_blank\" href=\"test\"",
-                Text = "src=\"test\""
-            });
-            list.Add(new ClientContentItem()
-            {
-                TextType = ClientTextType.Text,
-                Text = "1\r\n\r\n"
-            });
-            var actual = TransCodeHtmlToList(mock);
-            var expect = JsonConvert.SerializeObject(list);
-            Assert.AreEqual(expect, actual);
-        }
+        
         [Test]
         public void TestCSQuery() {
-            string mock = "亲亲>您的<p>身</p>份证是<br/>丢失<a href='http://www.baidu.com'>wwww</a>了还是没有带呢>";
+            string mock = "<p></p>";
             var b = CreateDOMTree(mock);
             Assert.IsNotNull(b);
 
             var a = TransCodeHtmlToListV2(mock);
-            Assert.IsNotNull(mock);
+            Assert.IsNotNull(a);
         }
         public HtmlNode CreateDOMTree(string html) {
             HtmlNode root = HtmlNode.CreateRoot();
@@ -156,10 +48,14 @@ namespace HtmlTranslateTest
                 }
                 else {
                     StringBuilder attrs = new StringBuilder();
+                    string link = null;
                     if (element.HasAttributes) {
                         element.Attributes.ToList().ForEach(x => attrs.AppendFormat("{0}='{1}'", x.Key, x.Value));
+                        var href = element.Attributes.FirstOrDefault(x => x.Key.ToLower() == "href");
+                        link = href.Value;
                     }
                     current = HtmlNode.Create(attrs.ToString(), NameToTagType(element.NodeName));
+                    current.link = link;
                 }
                 parent.AddChild(current);
             }
@@ -171,122 +67,7 @@ namespace HtmlTranslateTest
             }
             return current;
         }
-        [Test]
-        public void TestTranscodeToJsonObj2()
-        {
-
-            string mock = "亲亲>您的<p>身</p>份证是<br/>丢失<a>wwww</a>了还是没有带呢>";
-            Regex rgx = new Regex(@"<img(.+?[^/]+)>");
-            mock = rgx.Replace(mock, "<img$1/>");
-
-
-            var actual = TransCodeHtmlToList(mock);
-
-
-            var list = new List<ClientContentItem>();
-            list.Add(new ClientContentItem()
-            {
-                TextType = ClientTextType.Photo,
-                Link = "target=\"_blank\" href=\"test\"",
-                Text = "src=\"test\""
-            });
-            list.Add(new ClientContentItem()
-            {
-                TextType = ClientTextType.Text,
-                Text = "1\r\n\r\n"
-            });
-            var expect = JsonConvert.SerializeObject(list);
-
-
-            Assert.AreEqual(expect, actual);
-
-        }
-
-        [Test]
-        public void TestComplexTranscodeToJsonObj()
-        {
-            string mock = "<p></p>";
-            var result = TransCodeHtmlToList(mock);
-            Assert.IsNotNull(result);
-        }
-
-        private string encodeNoneHtmlChar(string html)
-        {
-            Regex TagPattern = new Regex(@"(?mi)(?:<\s*(?:[a-z]+)\s*)\S*?(?:(?:<\s*/[a-z]*)?[/]?\s*>)|(?:<\s*/[a-z]*?[/]?\s*>)");//匹配html标签头尾
-            MatchCollection mc = TagPattern.Matches(html);
-            int curPosition = 0;
-            StringBuilder returnString = new StringBuilder();
-            
-            foreach (Match match in mc)
-            {
-                returnString.Append(HttpUtility.HtmlEncode(html.Substring(curPosition, match.Index - curPosition)));
-                returnString.Append(match.Value);
-                curPosition += match.Index - curPosition + match.Length;
-            }
-            if (curPosition < html.Length - 1)
-            {
-                returnString.Append(HttpUtility.HtmlEncode(html.Substring(curPosition, html.Length - curPosition)));
-            }
-            return returnString.ToString();
-        }
-
-        private string TransCodeHtmlToList(string html)
-        {
-            //htmlencode
-            html = encodeNoneHtmlChar(html);
-            //htmlToTree
-            var mockHtmlTag = DecodeHtmlTag(html);
-            //TreeToList
-            List<ClientContentItem> returnList = mockHtmlTag.BackOrderTravel();
-            
-            //List中的特殊处理
-            if (returnList != null && returnList.Count > 0)
-            {
-                //Html解码
-                returnList.ForEach(r =>
-                {
-                    if(!string.IsNullOrEmpty(r.Text))
-                        r.Text = HttpUtility.HtmlDecode(r.Text);
-                    if (!string.IsNullOrEmpty(r.Link))
-                        r.Link = HttpUtility.HtmlDecode(r.Link);
-                });
-                //去掉最后多余的换行符
-                while (returnList.Count > 0 && !string.IsNullOrEmpty(returnList.Last().Text) && returnList.Last().Text.EndsWith("\r\n"))
-                {
-                    returnList.Last().Text = returnList.Last().Text.Substring(0, returnList.Last().Text.LastIndexOf("\r\n", StringComparison.Ordinal));
-                    if (string.IsNullOrEmpty(returnList.Last().Text) && returnList.Last().TextType == ClientTextType.Text)
-                    {
-                        returnList.RemoveAt(returnList.Count - 1);
-                    }
-                }
-                for (int i = 0; i < returnList.Count-1; i++)
-                {
-                    if (returnList[i].TextType == ClientTextType.Photo &&
-                        returnList[i + 1].TextType == ClientTextType.Href &&
-                        !string.IsNullOrEmpty(returnList[i + 1].Link) &&
-                        string.IsNullOrEmpty(returnList[i + 1].Text))
-                    {
-                        returnList[i].Link = returnList[i + 1].Link;
-                    }
-                }
-                //过滤邮件和电话链接，产生新的Type
-                foreach (var clientOntentItem in returnList.Where(r => r.TextType == ClientTextType.Href && !string.IsNullOrEmpty(r.Link)))
-                {
-                    if (clientOntentItem.Link.ToLower().Contains("mailto:"))
-                    {
-                        clientOntentItem.Link = string.Empty;
-                        clientOntentItem.TextType = ClientTextType.Email;
-                    }
-                    if (clientOntentItem.Link.ToLower().Contains("telto:"))
-                    {
-                        clientOntentItem.Link = string.Empty;
-                        clientOntentItem.TextType = ClientTextType.Tel;
-                    }
-                }
-            }
-            return JsonConvert.SerializeObject(returnList);
-        }
-
+        
         private string TransCodeHtmlToListV2(string html)
         {
             //htmlToTree
@@ -333,27 +114,7 @@ namespace HtmlTranslateTest
             }
             return JsonConvert.SerializeObject(returnList);
         }
-
-        private HtmlNode DecodeHtmlTag(string html)
-        {
-            
-            HtmlNode root = HtmlNode.CreateRoot();
-            //无内容
-            if (string.IsNullOrEmpty(html))
-                return root;
-
-            var doms = ConvertTagToList(html);
-            //无html标签
-            if (doms.Count == 0)
-            {
-                root.AddChild(HtmlNode.CreatePlainTag(html));
-                return root;
-            }
-            //再以此处理各个位置的关系
-            root.AddChilds(CreateNodesFromTag(doms,0,html,0));
-            return root;
-        }
-
+        
         private static TagType NameToTagType(string tagname) 
         {
             if(string.IsNullOrEmpty(tagname)) return TagType.Default;
@@ -390,64 +151,7 @@ namespace HtmlTranslateTest
             result.Add(HtmlNode.CreatePlainTag(html.Substring(currentPos,html.Length-currentPos)));
             return result;
         }
-
-        private static List<HtmlTag> ConvertTagToList(string html)
-        {
-            Regex TagPattern = new Regex(@"(?m)(?:<\s*(?:\w+)\s*)|(?:(?:<\s*/\w*)?[/]?\s*>)");//匹配html标签头尾
-            MatchCollection mc = TagPattern.Matches(html);
-            List<HtmlTag> doms = new List<HtmlTag>();
-            if (mc.Count == 0)
-            {
-                return doms;
-            }
-            //首先尝试使用堆栈来建立一个位置列表，将包含关系先确立
-            //tagname,tagStartPos,tagContentStartPos,tagProperties
-            Stack<Tuple<string, int, int, string>> tagStack = new Stack<Tuple<string, int, int, string>>();
-            int curPosition = 0;
-            Regex startTagPattern = new Regex(@"<\s*(\w+)\s*");
-            Regex propertyEndPattern = new Regex(@"^\s*>$");
-            Regex propertyEndAndTagEndPattern = new Regex(@"^\s*/\s*>$");
-            foreach (Match match in mc)
-            {
-                if (startTagPattern.IsMatch(match.Value)) //入栈
-                {
-                    curPosition = match.Index + match.Length;
-                    tagStack.Push(
-                        new Tuple<string, int, int, string>(startTagPattern.Match(match.Value).Groups[1].Captures[0].Value,
-                            match.Index, curPosition, string.Empty));
-                }
-                else if (propertyEndPattern.IsMatch(match.Value))
-                {
-                    var properties = html.Substring(curPosition, match.Index - curPosition);
-                    var tag = tagStack.Pop();
-                    curPosition = match.Index + match.Length;
-                    tagStack.Push(new Tuple<string, int, int, string>(tag.Item1, tag.Item2, curPosition, properties));
-                }
-                else //出栈
-                {
-                    var tag = tagStack.Pop();
-                    var tagContentStartPos = tag.Item3;
-                    string properties = tag.Item4;
-                    if (string.IsNullOrEmpty(properties) && propertyEndAndTagEndPattern.IsMatch(match.Value))
-                    {
-                        properties = html.Substring(curPosition, match.Index - curPosition);
-                        curPosition = match.Index;
-                        tagContentStartPos = curPosition;
-                    }
-                    doms.Add(new HtmlTag()
-                    {
-                        tagname = tag.Item1,
-                        tagStartPos = tag.Item2,
-                        tagContentStartPos = tagContentStartPos,
-                        tagContentEndPos = match.Index,
-                        tagEndPos = match.Index + match.Length,
-                        tagLevel = tagStack.Count,
-                        properties = properties
-                    });
-                }
-            }
-            return doms;
-        }
+        
     }
 
     public class HtmlTag
@@ -714,10 +418,6 @@ namespace HtmlTranslateTest
         /// <param name="olink">上层链接</param>
         private void AddClientContentItems(ref List<ClientContentItem> reList, List<ClientContentItem> backOrderTravel,string olink)
         {
-            if (reList == null || reList.Count == 0) {
-                reList = backOrderTravel;
-                return;
-            }
             if (backOrderTravel == null || backOrderTravel.Count == 0) return;
             //上层Link影响下层内容
             if (!string.IsNullOrEmpty(olink))
@@ -728,6 +428,12 @@ namespace HtmlTranslateTest
                     x.Link = olink;
                 });
                 backOrderTravel.Where(r=>r.TextType == ClientTextType.Photo).ToList().ForEach(x=>x.Link = olink);
+            }
+
+            if (reList == null || reList.Count == 0)
+            {
+                reList = backOrderTravel;
+                return;
             }
             var lastitem = reList.Last();
             foreach (ClientContentItem curItem in backOrderTravel)
@@ -784,7 +490,7 @@ namespace HtmlTranslateTest
 
         public void JoinWith(ClientContentItem curItem)
         {
-            if (this.TextType == curItem.TextType) ;
+            if (this.TextType == curItem.TextType)
             {
                 switch (this.TextType)
                 {
