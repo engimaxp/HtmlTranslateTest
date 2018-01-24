@@ -3,22 +3,55 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Web;
+using CsQuery;
 using Newtonsoft.Json;
 using NUnit.Framework;
-using CsQuery;
-using CsQuery.ExtensionMethods.Internal;
-using CsQuery.HtmlParser;
 
 namespace HtmlTranslateTest
 {
     [TestFixture]
     public class TestClass
     {
-        
-        [Test]
-        public void TestCSQuery() {
-            string mock = "<p></p>";
+        /// <summary>
+        /// 正则替换封装
+        /// </summary>
+        /// <param name="originalStr">原始字符串</param>
+        /// <param name="regexStr">正则表达式用(?<text/>.*?)形式捕获</param>
+        /// <param name="targetStr">替换目标字符串</param>
+        /// <param name="replaceKeys">正则捕获参数列表，将填充到目标字符串中</param>
+        /// <returns></returns>
+        private static string RegexReplace(string originalStr, string regexStr, string targetStr, params string[] replaceKeys)
+        {
+            Regex rege = new Regex(regexStr);
+            MatchCollection mc = rege.Matches(originalStr);
+            int curPostion = 0;
+            string html = string.Empty;
+            foreach (Match match in mc)
+            {
+                if (match.Index != curPostion)
+                {
+                    html += originalStr.Substring(curPostion, match.Index - curPostion);
+                }
+                curPostion = match.Index + match.Length;
+
+                html += string.Format(targetStr, replaceKeys.Select(replaceKey => match.Groups[replaceKey].Value).Cast<object>().ToArray());
+            }
+            if (curPostion != originalStr.Length)
+            {
+                html += originalStr.Substring(curPostion, originalStr.Length - curPostion);
+            }
+            if (mc.Count > 0)
+            {
+                return html;
+            }
+            return originalStr;
+        }
+
+
+        [TestCase("您好，您可以点击 <a lizard-catch=\"off\" onclick=\"chatUrlJumpLib.Jump('http://123123123', 2)\" >这里</a> ssssssss。")]
+        public void TestCSQuery(string htmlText) {
+            string mock = htmlText;
+            //for test
             var b = CreateDOMTree(mock);
             Assert.IsNotNull(b);
 
@@ -35,22 +68,27 @@ namespace HtmlTranslateTest
             root = IterateIDOMElement(dom.Document,null);
             return root;
         }
-        public HtmlNode IterateIDOMElement(IDomObject element, HtmlNode parent) {
+
+        private HtmlNode IterateIDOMElement(IDomObject element, HtmlNode parent)
+        {
             HtmlNode current;
-            if (parent == null)//root节点
+            if (parent == null) //root节点
             {
                 current = HtmlNode.CreateRoot();
             }
-            else {
+            else
+            {
                 if (element.NodeName == "#text")
                 {
                     current = HtmlNode.CreatePlainTag(element.ToString());
                 }
-                else {
-                    StringBuilder attrs = new StringBuilder();
+                else
+                {
+                    var attrs = new StringBuilder();
                     string link = null;
-                    if (element.HasAttributes) {
-                        element.Attributes.ToList().ForEach(x => attrs.AppendFormat("{0}='{1}'", x.Key, x.Value));
+                    if (element.HasAttributes)
+                    {
+                        element.Attributes.ToList().ForEach(x => attrs.AppendFormat("{0}='{1}' ", x.Key, x.Value));
                         var href = element.Attributes.FirstOrDefault(x => x.Key.ToLower() == "href");
                         link = href.Value;
                     }
@@ -60,8 +98,10 @@ namespace HtmlTranslateTest
                 parent.AddChild(current);
             }
             //遍历子树
-            if (element.HasChildren) {
-                for (int i = 0; i < element.ChildNodes.Count; i++) {
+            if (element.HasChildren)
+            {
+                for (var i = 0; i < element.ChildNodes.Count; i++)
+                {
                     IterateIDOMElement(element[i], current);
                 }
             }
@@ -134,42 +174,7 @@ namespace HtmlTranslateTest
             }
         }
 
-        private static List<HtmlNode> CreateNodesFromTag(List<HtmlTag> tags, int targetStartPos,string html, int tagLevel)
-        {
-            if (string.IsNullOrEmpty(html)) return null;
-            List<HtmlNode> result = new List<HtmlNode>();
-            int currentPos = 0;
-            var currentProcessingTag = tags.Where(x => x.tagLevel == tagLevel).ToList();
-            foreach (var tag in currentProcessingTag)
-            {
-                result.Add(HtmlNode.CreatePlainTag(html.Substring(currentPos, tag.tagStartPos - currentPos - targetStartPos)));
-                var currentNode = HtmlNode.Create(tag.properties, NameToTagType(tag.tagname));
-                currentNode.AddChilds(CreateNodesFromTag(tags.Where(r => r.tagStartPos <= tag.tagContentEndPos && r.tagStartPos >= tag.tagContentStartPos).ToList(), tag.tagContentStartPos, html.Substring(tag.tagContentStartPos - targetStartPos, tag.tagContentEndPos - tag.tagContentStartPos), tagLevel + 1));
-                result.Add(currentNode);
-                currentPos = tag.tagEndPos - targetStartPos;
-            }
-            result.Add(HtmlNode.CreatePlainTag(html.Substring(currentPos,html.Length-currentPos)));
-            return result;
-        }
-        
     }
-
-    public class HtmlTag
-    {
-        public string properties { get; set; }
-        public int tagStartPos { get; set; }
-        public int tagContentStartPos { get; set; }
-        public int tagContentEndPos { get; set; }
-        public int tagEndPos { get; set; }
-        public string tagname { get; set; }
-        public int tagLevel { get; set; }
-
-        public override string ToString()
-        {
-            return string.Format("{{{0}, {1}, {2}, {3}, {4}, {5}, {6}}}", properties, tagStartPos, tagContentStartPos, tagContentEndPos, tagEndPos, tagname, tagLevel);
-        }
-    }
-
     public enum TagType
     {
         Breaking,
@@ -201,14 +206,14 @@ namespace HtmlTranslateTest
             return Create(null, TagType.Default, text);
         }
 
-        public TagType type { get; set; }
-        public string properties { get; set; }
-        public string content { get; set; }
+        private TagType type { get; set; }
+        private string properties { get; set; }
+        private string content { get; set; }
         private readonly List<HtmlNode> ChildTags = new List<HtmlNode>();
         private string _link;
         public string link
         {
-            get
+            private get
             {
                 if (!string.IsNullOrEmpty(_link)) return _link;
                 if (string.IsNullOrEmpty(properties)) return string.Empty;
@@ -234,7 +239,7 @@ namespace HtmlTranslateTest
             }
             set { _link = value; }
         }
-        public string src
+        private string src
         {
             get
             {
@@ -256,83 +261,9 @@ namespace HtmlTranslateTest
             if (child == null) return;
             if (child.type == TagType.Default && !string.IsNullOrEmpty(child.content))
                 child.content = child.content.Replace("&nbsp;", " ");
-            if (child.type == TagType.Default && string.IsNullOrEmpty(child.content) &&
-                string.IsNullOrEmpty(child.properties))
-                return;
             ChildTags.Add(child);
         }
-        public void AddChilds(List<HtmlNode> childs)
-        {
-            if (childs == null || childs.Count == 0) return;
-            if (childs.TrueForAll(x => x.IsPlainText()))
-            {
-                if (content == null) content = String.Empty;
-                childs.ForEach(r=>content+=r.content);
-            }
-            else
-            {
-                childs.ForEach(AddChild);    
-            }
-        }
-
-        public bool IsPlainText()
-        {
-            if (type == TagType.Default && string.IsNullOrEmpty(properties))
-            {
-                if (ChildTags == null || ChildTags.Count == 0) return true;
-                return ChildTags.TrueForAll(r => r.IsPlainText());
-            }
-            return false;
-        }
-
-        public override string ToString()
-        {
-            return FormatIndexString(String.Empty);
-        }
-
-        private string FormatIndexString(string prefix)
-        {
-            StringBuilder stringBuilder = new StringBuilder(string.Format("{4}type: {0}, properties: {1}, content: {2}, link: {3}", type, properties, content, link,prefix));
-            if (ChildTags != null && ChildTags.Count > 0)
-            {
-                ChildTags.ForEach(x => stringBuilder.Append("\r\n" + x.FormatIndexString(prefix+"\t")));
-            }
-            return stringBuilder.ToString();
-        }
-
-        protected bool Equals(HtmlNode other)
-        {
-            bool result = type == other.type && string.Equals(properties, other.properties) && string.Equals(content, other.content);
-            if(result == false) return result;
-            if (ChildTags == null && other.ChildTags == null) return true;
-            if (ChildTags!=null && other.ChildTags!=null)
-            {
-                if (ChildTags.Count == 0 && other.ChildTags.Count == 0) return true;
-                if (ChildTags.Count != other.ChildTags.Count) return false;
-                return !ChildTags.Where((t, i) => !t.Equals(other.ChildTags[i])).Any();
-            }
-            return false;
-        }
-
-        public override bool Equals(object obj)
-        {
-            if (ReferenceEquals(null, obj)) return false;
-            if (ReferenceEquals(this, obj)) return true;
-            if (obj.GetType() != this.GetType()) return false;
-            return Equals((HtmlNode) obj);
-        }
-
-        public override int GetHashCode()
-        {
-            unchecked
-            {
-                var hashCode = (int) type;
-                hashCode = (hashCode*397) ^ (properties != null ? properties.GetHashCode() : 0);
-                hashCode = (hashCode*397) ^ (content != null ? content.GetHashCode() : 0);
-                return hashCode;
-            }
-        }
-
+        
         public List<ClientContentItem> BackOrderTravel()
         {
             List<ClientContentItem> reList = new List<ClientContentItem>();
@@ -463,11 +394,6 @@ namespace HtmlTranslateTest
         public ClientTextType TextType { get; set; }
         public string Text { get; set; }
         public string Link { get; set; }
-
-        public bool isEmpty()
-        {
-            return string.IsNullOrEmpty(Text);
-        }
 
         public bool JoinAbleWith(ClientContentItem curItem)
         {
